@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+{% block title %}{{ region_name | replace('_', ' ') | title }} - Beach Scraper{% endblock %}
+
+{% block content %}
+<div class="flex-between mb-16">
+    <div>
+        <a href="/" style="font-size: 13px; color: var(--text2);">Dashboard</a>
+        <h2 style="font-size: 24px; text-transform: capitalize;">{{ region_name | replace('_', ' ') }}</h2>
+        <p style="color: var(--text2); font-size: 14px;">{{ beaches | length }} beaches</p>
+    </div>
+    <div class="flex">
+        <a href="/region/{{ region_name }}/map" class="btn">Map View</a>
+        <button class="btn" onclick="validateData()">Validate</button>
+        <button class="btn btn-success" onclick="generateCSV()">Generate CSV</button>
+        <a href="/api/region/{{ region_name }}/download-csv" class="btn btn-primary">Download CSV</a>
+    </div>
+</div>
+
+<!-- Validation Results -->
+<div id="validationResults" class="card" style="display: none;">
+    <div class="flex-between">
+        <h2>Validation Results</h2>
+        <button class="btn btn-sm" onclick="document.getElementById('validationResults').style.display='none'">Close</button>
+    </div>
+    <ul class="validation-list" id="validationList"></ul>
+</div>
+
+<!-- Beach Table -->
+<div class="card" style="overflow-x: auto;">
+    <div class="flex-between mb-8">
+        <h2>Beaches</h2>
+        <div class="flex">
+            <select id="fieldFilter" onchange="filterFields()" style="width: 200px;">
+                <option value="core">Core Fields</option>
+                <option value="amenities">Amenities</option>
+                <option value="terrain">Terrain</option>
+                <option value="activities">Activities</option>
+                <option value="photos">Photos & Contact</option>
+                <option value="all">All Fields</option>
+            </select>
+            <button class="btn btn-sm btn-primary" onclick="addBeach()">+ Add Beach</button>
+        </div>
+    </div>
+    <div style="max-height: 70vh; overflow: auto;">
+        <table id="beachTable">
+            <thead>
+                <tr id="headerRow"></tr>
+            </thead>
+            <tbody id="beachBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Coordinate Validation Modal -->
+<div class="modal-overlay" id="coordModal">
+    <div class="modal">
+        <h2>Coordinate Validation</h2>
+        <div id="coordResult"></div>
+        <div class="flex mt-16" style="justify-content: flex-end;">
+            <button class="btn" onclick="hideModal('coordModal')">Close</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const regionName = "{{ region_name }}";
+    let beaches = {{ beaches | tojson }};
+
+    const fieldGroups = {
+        core: ['name', 'country', 'city', 'additional_info.geo_area', 'lat', 'lon', 'beach_id'],
+        amenities: ['name', 'additional_info.parking', 'additional_info.fee', 'accessible', 'additional_info.bathroom',
+                     'additional_info.visitor_center', 'additional_info.dog_friendly', 'additional_info.strollers',
+                     'additional_info.picnic', 'additional_info.camping_friendly', 'bike_path'],
+        terrain: ['name', 'additional_info.sandy', 'additional_info.dunes', 'additional_info.rocky',
+                  'additional_info.bluff', 'additional_info.stairstobeach', 'additional_info.pathtobeach',
+                  'additional_info.blufftoop_trails', 'additional_info.blufftoop_park', 'additional_info.wildlife',
+                  'additional_info.tidepool'],
+        activities: ['name', 'additional_info.volleyball', 'additional_info.fishing_friendly',
+                     'additional_info.boat_friendly', 'additional_info.boatfacil'],
+        photos: ['name', 'additional_info.beach_phone', 'additional_info.beach_photo1',
+                 'additional_info.beach_photo2', 'additional_info.beach_photo3',
+                 'additional_info.beach_photo4', 'additional_info.beach_wheelchair'],
+    };
+
+    const booleanFields = {{ beaches | tojson is not none and 'true' or 'false' }} ? new Set([
+        {% for f in fields %}{% if f.boolean %}"{{ f.name }}",{% endif %}{% endfor %}
+    ]) : new Set();
+
+    const requiredFields = new Set([
+        {% for f in fields %}{% if f.required %}"{{ f.name }}",{% endif %}{% endfor %}
+    ]);
+
+    const autoFields = new Set(['beach_id', '__v', 'is_separated', 'blue_flag']);
+
+    let currentFields = fieldGroups.core;
+
+    function shortLabel(name) {
+        return name
+            .replace('additional_info.', '')
+            .replace('blufftoop_', 'clifftop_')
+            .replace('_', ' ');
+    }
+
+    function renderTable() {
+        const headerRow = document.getElementById('headerRow');
+        const body = document.getElementById('beachBody');
+
+        // Header
+        headerRow.innerHTML = '<th>#</th>';
+        currentFields.forEach(f => {
+            const label = shortLabel(f);
+            const req = requiredFields.has(f) ? ' *' : '';
+            headerRow.innerHTML += `<th title="${f}">${label}${req}</th>`;
+        });
+        headerRow.innerHTML += '<th>Actions</th>';
+
+        // Body
+        body.innerHTML = '';
+        beaches.forEach((beach, i) => {
+            let row = `<tr><td style="color: var(--text2);">${i + 1}</td>`;
+            currentFields.forEach(f => {
+                const val = beach[f] || '';
+                const isAuto = autoFields.has(f);
+                if (isAuto) {
+                    row += `<td style="color: var(--text2);">${val}</td>`;
+                } else if (booleanFields.has(f)) {
+                    const checked = val === 'TRUE' || val === true;
+                    const indeterminate = val === '' || val === undefined;
+                    row += `<td>
+                        <select onchange="updateField(${i}, '${f}', this.value)"
+                                style="width: 80px; padding: 2px 4px; font-size: 12px;
+                                ${indeterminate ? 'color: var(--text2);' : checked ? 'color: var(--success);' : 'color: var(--error);'}">
+                            <option value="" ${indeterminate ? 'selected' : ''}>--</option>
+                            <option value="TRUE" ${checked ? 'selected' : ''}>TRUE</option>
+                            <option value="FALSE" ${!indeterminate && !checked ? 'selected' : ''}>FALSE</option>
+                        </select>
+                    </td>`;
+                } else {
+                    const width = f === 'name' ? '200px' : f.includes('photo') ? '250px' : '120px';
+                    row += `<td><input value="${escapeHtml(val)}"
+                                style="width: ${width}; padding: 2px 6px; font-size: 12px;"
+                                onchange="updateField(${i}, '${f}', this.value)"></td>`;
+                }
+            });
+            row += `<td class="flex gap-sm">
+                <button class="btn btn-sm" onclick="validateCoord(${i})" title="Check coordinates">Coords</button>
+                <button class="btn btn-sm btn-danger" onclick="removeBeach(${i})" title="Remove">Del</button>
+            </td></tr>`;
+            body.innerHTML += row;
+        });
+    }
+
+    function escapeHtml(str) {
+        if (typeof str !== 'string') return str;
+        return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function updateField(index, field, value) {
+        beaches[index][field] = value;
+        // Sync accessible and disabilities_status
+        if (field === 'accessible') beaches[index]['disabilities_status'] = value;
+        if (field === 'disabilities_status') beaches[index]['accessible'] = value;
+        autoSave();
+    }
+
+    let saveTimeout;
+    function autoSave() {
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(async () => {
+            try {
+                await apiCall(`/api/region/${regionName}/save`, 'POST', { beaches });
+                showToast('Saved');
+            } catch (e) {
+                showToast('Save failed: ' + e.message, 'error');
+            }
+        }, 1000);
+    }
+
+    function filterFields() {
+        const group = document.getElementById('fieldFilter').value;
+        if (group === 'all') {
+            currentFields = [
+                {% for f in fields %}{% if f.name != '' %}"{{ f.name }}",{% endif %}{% endfor %}
+            ];
+        } else {
+            currentFields = fieldGroups[group] || fieldGroups.core;
+        }
+        renderTable();
+    }
+
+    async function addBeach() {
+        const country = beaches.length > 0 ? beaches[0].country : '';
+        const city = beaches.length > 0 ? beaches[0].city : '';
+        try {
+            await apiCall(`/api/region/${regionName}/add-beach`, 'POST', {
+                country, city, name: 'New Beach', geo_area: ''
+            });
+            location.reload();
+        } catch (e) {
+            showToast(e.message, 'error');
+        }
+    }
+
+    async function removeBeach(index) {
+        if (!confirm(`Remove "${beaches[index].name}"?`)) return;
+        try {
+            await apiCall(`/api/region/${regionName}/remove-beach`, 'POST', { index });
+            beaches.splice(index, 1);
+            renderTable();
+            showToast('Beach removed');
+        } catch (e) {
+            showToast(e.message, 'error');
+        }
+    }
+
+    async function validateData() {
+        try {
+            const data = await apiCall(`/api/region/${regionName}/validate`, 'POST');
+            const el = document.getElementById('validationResults');
+            const list = document.getElementById('validationList');
+            el.style.display = 'block';
+            if (data.issues.length === 0) {
+                list.innerHTML = '<li style="color: var(--success);">All checks passed!</li>';
+            } else {
+                list.innerHTML = data.issues.map(i =>
+                    `<li class="${i.level.toLowerCase()}">[${i.level}] ${i.message}</li>`
+                ).join('');
+            }
+        } catch (e) {
+            showToast(e.message, 'error');
+        }
+    }
+
+    async function validateCoord(index) {
+        const beach = beaches[index];
+        if (!beach.lat || !beach.lon) {
+            showToast('No coordinates to validate', 'error');
+            return;
+        }
+        const modal = document.getElementById('coordModal');
+        const result = document.getElementById('coordResult');
+        result.innerHTML = '<p>Checking coordinates...</p>';
+        modal.classList.add('active');
+        try {
+            const data = await apiCall(`/api/region/${regionName}/validate-coords`, 'POST', {
+                index, country: beach.country
+            });
+            let html = `<p><strong>${beach.name}</strong></p>`;
+            html += `<p>Lat: ${beach.lat}, Lon: ${beach.lon}</p>`;
+            if (data.is_valid) {
+                html += `<p class="mt-8" style="color: var(--success);">Valid - country matches</p>`;
+            } else {
+                html += `<p class="mt-8" style="color: var(--error);">Issue: ${data.details.warning || data.details.error || 'Unknown'}</p>`;
+            }
+            if (data.details.nominatim_name) {
+                html += `<p class="mt-8" style="color: var(--text2); font-size: 13px;">Nominatim: ${data.details.nominatim_name}</p>`;
+            }
+            html += `<a href="https://www.openstreetmap.org/?mlat=${beach.lat}&mlon=${beach.lon}#map=15/${beach.lat}/${beach.lon}"
+                       target="_blank" class="btn btn-sm mt-8">View on OpenStreetMap</a>`;
+            result.innerHTML = html;
+        } catch (e) {
+            result.innerHTML = `<p style="color: var(--error);">Error: ${e.message}</p>`;
+        }
+    }
+
+    async function generateCSV() {
+        try {
+            const data = await apiCall(`/api/region/${regionName}/generate-csv`, 'POST');
+            showToast(`CSV generated! ${data.count} beaches, IDs ${data.id_range}`);
+            setTimeout(() => location.reload(), 1500);
+        } catch (e) {
+            showToast(e.message, 'error');
+        }
+    }
+
+    function hideModal(id) {
+        document.getElementById(id).classList.remove('active');
+    }
+    document.querySelectorAll('.modal-overlay').forEach(el => {
+        el.addEventListener('click', (e) => { if (e.target === el) el.classList.remove('active'); });
+    });
+
+    // Initial render
+    renderTable();
+</script>
+{% endblock %}

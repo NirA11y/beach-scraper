@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Beach Scraper{% endblock %}
+
+{% block content %}
+<div class="flex-between mb-16">
+    <div>
+        <h2 style="font-size: 24px;">Dashboard</h2>
+        <p style="color: var(--text2); font-size: 14px;">Next beach ID: {{ last_id + 1 }}</p>
+    </div>
+    <div class="flex">
+        <button class="btn btn-primary" onclick="showCreateModal()">+ New Region</button>
+        <button class="btn" onclick="showUploadModal()">Upload JSON</button>
+    </div>
+</div>
+
+{% if regions %}
+<div class="grid grid-3">
+    {% for r in regions %}
+    <div class="card" style="cursor: pointer;" onclick="window.location='/region/{{ r.name }}'">
+        <div class="flex-between mb-8">
+            <h2 style="text-transform: capitalize;">{{ r.name.replace('_', ' ') }}</h2>
+            {% if r.csv_exists %}
+            <span class="badge badge-success">CSV Ready</span>
+            {% else %}
+            <span class="badge badge-warn">Draft</span>
+            {% endif %}
+        </div>
+        <p style="color: var(--text2); font-size: 13px;">{{ r.country }}</p>
+        <p style="font-size: 24px; font-weight: 600; margin-top: 8px;">{{ r.beach_count }}</p>
+        <p style="color: var(--text2); font-size: 12px;">beaches</p>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <h3>No regions yet</h3>
+    <p>Create a new region or upload a JSON file to get started.</p>
+</div>
+{% endif %}
+
+<!-- Create Region Modal -->
+<div class="modal-overlay" id="createModal">
+    <div class="modal">
+        <h2>New Region</h2>
+        <div class="mb-16">
+            <label style="font-size: 13px; color: var(--text2); display: block; margin-bottom: 4px;">Region Name</label>
+            <input id="regionName" placeholder="e.g., rhode_island">
+        </div>
+        <div class="mb-16">
+            <label style="font-size: 13px; color: var(--text2); display: block; margin-bottom: 4px;">Country</label>
+            <input id="regionCountry" placeholder="e.g., United States">
+        </div>
+        <div class="flex" style="justify-content: flex-end;">
+            <button class="btn" onclick="hideModal('createModal')">Cancel</button>
+            <button class="btn btn-primary" onclick="createRegion()">Create</button>
+        </div>
+    </div>
+</div>
+
+<!-- Upload JSON Modal -->
+<div class="modal-overlay" id="uploadModal">
+    <div class="modal">
+        <h2>Upload JSON File</h2>
+        <p style="color: var(--text2); font-size: 13px; margin-bottom: 16px;">
+            Upload a JSON file containing beach data. The filename will be used as the region name.
+        </p>
+        <form id="uploadForm" enctype="multipart/form-data">
+            <input type="file" id="jsonFile" accept=".json" style="margin-bottom: 16px;">
+            <div class="flex" style="justify-content: flex-end;">
+                <button type="button" class="btn" onclick="hideModal('uploadModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Upload</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function showCreateModal() {
+        document.getElementById('createModal').classList.add('active');
+    }
+    function showUploadModal() {
+        document.getElementById('uploadModal').classList.add('active');
+    }
+    function hideModal(id) {
+        document.getElementById(id).classList.remove('active');
+    }
+
+    async function createRegion() {
+        const name = document.getElementById('regionName').value.trim();
+        const country = document.getElementById('regionCountry').value.trim();
+        if (!name) return;
+        try {
+            const data = await apiCall('/api/region', 'POST', {
+                name: name,
+                beaches: [{ country: country, city: '', name: 'New Beach', lat: '', lon: '', 'additional_info.geo_area': '' }]
+            });
+            window.location = `/region/${data.region}`;
+        } catch (e) {
+            showToast(e.message, 'error');
+        }
+    }
+
+    document.getElementById('uploadForm').onsubmit = async (e) => {
+        e.preventDefault();
+        const file = document.getElementById('jsonFile').files[0];
+        if (!file) return;
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const resp = await fetch('/api/upload-json', { method: 'POST', body: formData });
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.error);
+            window.location = `/region/${data.region}`;
+        } catch (e) {
+            showToast(e.message, 'error');
+        }
+    };
+
+    // Close modals on overlay click
+    document.querySelectorAll('.modal-overlay').forEach(el => {
+        el.addEventListener('click', (e) => {
+            if (e.target === el) el.classList.remove('active');
+        });
+    });
+</script>
+{% endblock %}

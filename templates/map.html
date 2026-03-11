@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Map - {{ region_name | replace('_', ' ') | title }}{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+    #map { height: calc(100vh - 140px); border-radius: var(--radius); border: 1px solid var(--border); }
+    .beach-popup { font-size: 13px; }
+    .beach-popup h3 { font-size: 14px; margin-bottom: 4px; }
+    .beach-popup p { color: #666; margin: 2px 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="flex-between mb-16">
+    <div>
+        <a href="/region/{{ region_name }}" style="font-size: 13px; color: var(--text2);">Back to table</a>
+        <h2 style="font-size: 24px; text-transform: capitalize;">{{ region_name | replace('_', ' ') }} - Map</h2>
+    </div>
+</div>
+<div id="map"></div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    const beaches = {{ beaches | safe }};
+
+    const map = L.map('map');
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    if (beaches.length === 0) {
+        map.setView([0, 0], 2);
+    } else {
+        const markers = [];
+        beaches.forEach(b => {
+            if (!b.lat || !b.lon) return;
+            const marker = L.marker([parseFloat(b.lat), parseFloat(b.lon)]).addTo(map);
+            marker.bindPopup(`
+                <div class="beach-popup">
+                    <h3>${b.name}</h3>
+                    <p>${b.city || ''} ${b.geo_area ? '(' + b.geo_area + ')' : ''}</p>
+                    <p>${b.lat}, ${b.lon}</p>
+                    <a href="https://www.google.com/maps?q=${b.lat},${b.lon}" target="_blank">Google Maps</a>
+                </div>
+            `);
+            markers.push(marker);
+        });
+        if (markers.length > 0) {
+            const group = L.featureGroup(markers);
+            map.fitBounds(group.getBounds().pad(0.1));
+        }
+    }
+</script>
+{% endblock %}
