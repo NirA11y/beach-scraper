@@ -8,3 +8,4 @@ services:
       - key: FLASK_DEBUG
         value: "0"
     plan: free
+    autoDeploy: true
