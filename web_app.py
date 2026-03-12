@@ -34,6 +34,8 @@ TEMPLATE_DIR = os.path.join(BASE_DIR, "templates")
 app = Flask(__name__, template_folder=TEMPLATE_DIR)
 app.secret_key = "beach-scraper-dev"
 
+APP_VERSION = "0.3.0"
+
 # --- Helpers ---
 
 def get_regions():
@@ -84,7 +86,7 @@ def save_region(region_name, beaches):
 def dashboard():
     regions = get_regions()
     last_id = load_last_id()
-    return render_template("dashboard.html", regions=regions, last_id=last_id)
+    return render_template("dashboard.html", regions=regions, last_id=last_id, version=APP_VERSION)
 
 
 @app.route("/region/<region_name>")
