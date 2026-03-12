@@ -91,13 +91,33 @@
         const name = document.getElementById('regionName').value.trim();
         const country = document.getElementById('regionCountry').value.trim();
         if (!name) return;
+
+        const btn = event.target;
+        btn.disabled = true;
+        btn.textContent = 'Discovering beaches...';
+
         try {
-            const data = await apiCall('/api/region', 'POST', {
+            // Create the region first
+            await apiCall('/api/region', 'POST', {
                 name: name,
-                beaches: [{ country: country, city: '', name: 'New Beach', lat: '', lon: '', 'additional_info.geo_area': '' }]
+                beaches: [{ country: country, city: name, name: 'New Beach', lat: '', lon: '', 'additional_info.geo_area': '' }]
             });
-            window.location = `/region/${data.region}`;
+
+            // Auto-discover beaches via Overpass API
+            try {
+                const disc = await apiCall(`/api/region/${name.toLowerCase().replace(/ /g, '_')}/discover`, 'POST', {
+                    country: country,
+                    region: name,
+                });
+                showToast(`Found ${disc.discovered} beaches!`);
+            } catch (discErr) {
+                showToast(`Region created, but discovery failed: ${discErr.message}. You can retry from the region page.`, 'error');
+            }
+
+            window.location = `/region/${name.toLowerCase().replace(/ /g, '_')}`;
         } catch (e) {
+            btn.disabled = false;
+            btn.textContent = 'Create';
             showToast(e.message, 'error');
         }
     }

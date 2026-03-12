@@ -13,6 +13,7 @@ import csv
 import io
 import json
 import os
+import time
 import threading
 
 from flask import (
@@ -259,6 +260,150 @@ def remove_beach(region_name):
     removed = beaches.pop(index)
     save_region(region_name, beaches)
     return jsonify({"success": True, "removed": removed.get("name", "")})
+
+
+# --- Beach Discovery via Overpass API ---
+
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+
+def discover_beaches_osm(country, region=""):
+    """
+    Query OpenStreetMap Overpass API for all beaches in a country/region.
+    Returns a list of beach dicts with name, lat, lon, and available tags.
+    """
+    import requests
+
+    # Build Overpass query - search for beaches tagged as natural=beach
+    # within the country boundary
+    search_area = region if region and region.lower() != country.lower() else country
+
+    query = f"""
+    [out:json][timeout:60];
+    area["name:en"="{country}"]["admin_level"="2"]->.country;
+    (
+      node["natural"="beach"](area.country);
+      way["natural"="beach"](area.country);
+      relation["natural"="beach"](area.country);
+    );
+    out center tags;
+    """
+
+    try:
+        resp = requests.post(OVERPASS_URL, data={"data": query}, timeout=90)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        # Try alternative query with local name
+        query_alt = f"""
+        [out:json][timeout:60];
+        area["name"="{country}"]["admin_level"="2"]->.country;
+        (
+          node["natural"="beach"](area.country);
+          way["natural"="beach"](area.country);
+          relation["natural"="beach"](area.country);
+        );
+        out center tags;
+        """
+        try:
+            resp = requests.post(OVERPASS_URL, data={"data": query_alt}, timeout=90)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e2:
+            return [], f"Overpass API error: {str(e2)}"
+
+    elements = data.get("elements", [])
+    beaches = []
+    seen_names = set()
+
+    for el in elements:
+        tags = el.get("tags", {})
+        name = tags.get("name", tags.get("name:en", ""))
+        if not name:
+            continue  # Skip unnamed beaches
+
+        # Deduplicate by name
+        if name.lower() in seen_names:
+            continue
+        seen_names.add(name.lower())
+
+        # Get coordinates (center for ways/relations)
+        lat = el.get("lat") or el.get("center", {}).get("lat")
+        lon = el.get("lon") or el.get("center", {}).get("lon")
+        if not lat or not lon:
+            continue
+
+        # Map OSM tags to our schema
+        beach = {
+            "country": country,
+            "city": region or country,
+            "name": name,
+            "lat": round(float(lat), 6),
+            "lon": round(float(lon), 6),
+            "additional_info.geo_area": tags.get("addr:district", tags.get("addr:city", region or "")),
+            "additional_info.sandy": "TRUE" if tags.get("surface") == "sand" else "",
+            "additional_info.dog_friendly": "TRUE" if tags.get("dog") == "yes" else ("FALSE" if tags.get("dog") == "no" else ""),
+            "accessible": "TRUE" if tags.get("wheelchair") == "yes" else ("FALSE" if tags.get("wheelchair") == "no" else ""),
+            "disabilities_status": "TRUE" if tags.get("wheelchair") == "yes" else ("FALSE" if tags.get("wheelchair") == "no" else ""),
+            "additional_info.fee": "TRUE" if tags.get("fee") == "yes" else ("FALSE" if tags.get("fee") == "no" else ""),
+            "additional_info.parking": "TRUE" if tags.get("parking") else "",
+            "additional_info.bathroom": "TRUE" if tags.get("toilets") == "yes" else "",
+            "additional_info.beach_phone": tags.get("phone", tags.get("contact:phone", "")),
+            "blue_flag": "TRUE" if tags.get("flag:type") == "blue_flag" or "blue flag" in tags.get("description", "").lower() else "FALSE",
+        }
+
+        # Add website as photo if available
+        website = tags.get("website", tags.get("url", ""))
+        if website:
+            beach["_website"] = website
+
+        beaches.append(beach)
+
+    # Sort by latitude (north to south)
+    beaches.sort(key=lambda b: -float(b["lat"]))
+
+    return beaches, None
+
+
+# Track discovery jobs
+discovery_jobs = {}
+
+
+@app.route("/api/region/<region_name>/discover", methods=["POST"])
+def discover_beaches(region_name):
+    """Discover beaches using OpenStreetMap Overpass API."""
+    data = request.get_json()
+    country = data.get("country", "")
+    region = data.get("region", region_name.replace("_", " "))
+
+    if not country:
+        return jsonify({"error": "Country name required"}), 400
+
+    # Run discovery
+    beaches, error = discover_beaches_osm(country, region)
+
+    if error:
+        return jsonify({"error": error}), 500
+
+    if not beaches:
+        return jsonify({"error": f"No beaches found for '{country}'. Try the English country name (e.g., 'Israel' not 'ישראל')."}), 404
+
+    # Merge with existing beaches (keep existing, add new)
+    existing = load_region(region_name) or []
+    existing_names = {b.get("name", "").lower() for b in existing}
+    new_beaches = [b for b in beaches if b["name"].lower() not in existing_names]
+
+    merged = existing + new_beaches if existing else beaches
+    # Remove the placeholder "New Beach" entry
+    merged = [b for b in merged if b.get("name") != "New Beach"]
+
+    save_region(region_name, merged)
+
+    return jsonify({
+        "success": True,
+        "discovered": len(beaches),
+        "new": len(new_beaches),
+        "total": len(merged),
+    })
 
 
 @app.route("/api/upload-json", methods=["POST"])

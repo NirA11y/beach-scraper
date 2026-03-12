@@ -9,6 +9,7 @@
         <p style="color: var(--text2); font-size: 14px;">{{ beaches | length }} beaches</p>
     </div>
     <div class="flex">
+        <button class="btn" onclick="discoverBeaches()" id="discoverBtn" style="border-color: var(--warn); color: var(--warn);">Discover Beaches</button>
         <a href="/region/{{ region_name }}/map" class="btn">Map View</a>
         <button class="btn" onclick="validateData()">Validate</button>
         <button class="btn btn-success" onclick="generateCSV()">Generate CSV</button>
@@ -262,6 +263,36 @@
             result.innerHTML = html;
         } catch (e) {
             result.innerHTML = `<p style="color: var(--error);">Error: ${e.message}</p>`;
+        }
+    }
+
+    async function discoverBeaches() {
+        const country = beaches.length > 0 ? (beaches[0].country || '') : '';
+        if (!country) {
+            const c = prompt('Enter the English country name (e.g., "Israel", "United States"):');
+            if (!c) return;
+            var useCountry = c;
+        } else {
+            var useCountry = country;
+        }
+
+        const btn = document.getElementById('discoverBtn');
+        btn.disabled = true;
+        btn.textContent = 'Searching OpenStreetMap...';
+        btn.style.color = 'var(--text2)';
+
+        try {
+            const data = await apiCall(`/api/region/${regionName}/discover`, 'POST', {
+                country: useCountry,
+                region: regionName.replace(/_/g, ' '),
+            });
+            showToast(`Discovered ${data.discovered} beaches (${data.new} new). Total: ${data.total}`);
+            setTimeout(() => location.reload(), 1000);
+        } catch (e) {
+            showToast('Discovery failed: ' + e.message, 'error');
+            btn.disabled = false;
+            btn.textContent = 'Discover Beaches';
+            btn.style.color = 'var(--warn)';
         }
     }
 
